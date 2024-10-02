@@ -1,53 +1,81 @@
 import streamlit as st
+import pandas as pd
 from openai import OpenAI
 
-# Show title and description.
-st.title("📄 Document question answering")
-st.write(
-    "Upload a document below and ask a question about it – GPT will answer! "
-    "To use this app, you need to provide an OpenAI API key, which you can get [here](https://platform.openai.com/account/api-keys). "
-)
+import time
+from io import BytesIO
 
-# Ask user for their OpenAI API key via `st.text_input`.
-# Alternatively, you can store the API key in `./.streamlit/secrets.toml` and access it
-# via `st.secrets`, see https://docs.streamlit.io/develop/concepts/connections/secrets-management
-openai_api_key = st.text_input("OpenAI API Key", type="password")
-if not openai_api_key:
-    st.info("Please add your OpenAI API key to continue.", icon="🗝️")
-else:
+# Streamlit app
+def main():
+    st.title("OpenAI CSV/Excel Processor")
 
-    # Create an OpenAI client.
-    client = OpenAI(api_key=openai_api_key)
+    # Input fields for OpenAI API Key and file upload
+    openai_key = st.text_input("Enter your OpenAI API Key", type="password")
+    uploaded_file = st.file_uploader("Upload a CSV or Excel file", type=["csv", "xlsx"])
 
-    # Let the user upload a file via `st.file_uploader`.
-    uploaded_file = st.file_uploader(
-        "Upload a document (.txt or .md)", type=("txt", "md")
-    )
 
-    # Ask the user for a question via `st.text_area`.
-    question = st.text_area(
-        "Now ask a question about the document!",
-        placeholder="Can you give me a short summary?",
-        disabled=not uploaded_file,
-    )
+    if openai_key and uploaded_file:
+        client = OpenAI(api_key=openai_key)
 
-    if uploaded_file and question:
+        # Read the uploaded file
+        if uploaded_file.name.endswith('.csv'):
+            df = pd.read_csv(uploaded_file)
+        elif uploaded_file.name.endswith('.xlsx'):
+            df = pd.read_excel(uploaded_file)
 
-        # Process the uploaded file and question.
-        document = uploaded_file.read().decode()
-        messages = [
-            {
-                "role": "user",
-                "content": f"Here's a document: {document} \n\n---\n\n {question}",
-            }
-        ]
+        # Check if the dataframe is valid
+        if df.empty or df.shape[1] < 1:
+            st.error("The uploaded file must have at least one column with data.")
+            return
 
-        # Generate an answer using the OpenAI API.
-        stream = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=messages,
-            stream=True,
+        # Set OpenAI API key
+
+        # Initialize an empty list to store OpenAI responses
+        responses = []
+
+        # Display progress bar
+        progress_bar = st.progress(0)
+        total_rows = len(df)
+
+        # Iterate over the first column and send each cell to OpenAI
+        for idx, value in enumerate(df.iloc[:, 0]):
+            try:
+                response = client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[
+                        {"role": "system", "content": "You are a helpful assistant."},
+                        {
+                            "role": "user",
+                            "content": value
+                        }
+                    ]
+                )
+                responses.append(response.choices[0].message.content)
+            except Exception as e:
+                responses.append(f"Error: {e}")
+
+            # Update progress bar
+            progress_bar.progress((idx + 1) / total_rows)
+            time.sleep(0.1)  # To avoid rate limiting
+
+        # Add the responses as a new column to the dataframe
+        df['OpenAI Response'] = responses
+
+        # Allow the user to download the updated file
+        output = BytesIO()
+        if uploaded_file.name.endswith('.csv'):
+            df.to_csv(output, index=False)
+            output_filename = "openai_responses.csv"
+        elif uploaded_file.name.endswith('.xlsx'):
+            df.to_excel(output, index=False, engine='xlsxwriter')
+            output_filename = "openai_responses.xlsx"
+
+        st.download_button(
+            label="Download Output File",
+            data=output.getvalue(),
+            file_name=output_filename,
+            mime="text/csv" if uploaded_file.name.endswith('.csv') else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-        # Stream the response to the app using `st.write_stream`.
-        st.write_stream(stream)
+if __name__ == "__main__":
+    main()
