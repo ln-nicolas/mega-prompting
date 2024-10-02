@@ -38,7 +38,7 @@ def main():
         total_rows = len(df)
 
         # Iterate over the first column and send each cell to OpenAI
-        for idx, value in enumerate(df['instruction']):
+        for idx, value in enumerate(df['instructions']):
             try:
                 response = client.chat.completions.create(
                     model="gpt-4o",
